@@ -1022,7 +1022,8 @@ async function preloadCDNImages(rootEl){
 }
 function restoreImages(replacements){ if(!replacements) return; for(const r of replacements){ if(r.prop==='bg') r.el.style.backgroundImage=r.val; else if(r.prop==='src') r.el.src=r.val; } }
 
-async function exportPNG(scale = 2){
+// 核心渲染：把当前画布渲染成 PNG blob（不弹 UI），供单张导出与批量导出共用
+async function renderToBlob(scale = 2){
   const canvas = $('canvas');
   // 移出可视区并移除缩放，确保导出原始尺寸（不用 opacity:0，会导致 html2canvas 渲染空白）
   const saved = { transform: canvas.style.transform, position: canvas.style.position, left: canvas.style.left, top: canvas.style.top, zIndex: canvas.style.zIndex };
@@ -1031,37 +1032,104 @@ async function exportPNG(scale = 2){
   canvas.style.left = '-9999px';
   canvas.style.top = '0';
   canvas.style.zIndex = '-1';
-  showToast('正在加载素材…', 0);
   let replacements = null;
   try {
     if (typeof html2canvas === 'undefined') throw new Error('图片库未加载，请刷新页面重试');
     // 预加载 CDN 图片 → data URL，消除跨域问题
     replacements = await preloadCDNImages(canvas);
-    showToast('正在生成图片…', 0);
     // 超时保护：30 秒未完成则报错，避免永久卡住
     const renderP = html2canvas(canvas, { scale, useCORS: false, allowTaint: false, backgroundColor: null, logging: false });
     const timeoutP = new Promise((_, reject) => setTimeout(() => reject(new Error('生成超时，请减少设备数量或降低分辨率后重试')), 30000));
     const c = await Promise.race([renderP, timeoutP]);
     const blob = await new Promise(res => c.toBlob(res, 'image/png'));
     if (!blob) throw new Error('生成图片失败');
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
-    const isSA = (navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
-    if (isMobile || isSA) {
-      hideToast();
-      const blobURL = URL.createObjectURL(blob);
-      showSaveOverlay(blobURL, blob);
-    } else {
-      hideToast();
-      const blobURL = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = blobURL; a.download = 'mockup-' + Date.now() + '.png'; a.click();
-      setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
-    }
-  } catch(e){ console.error(e); showToast('导出失败：'+e.message, 4000); }
-  finally {
+    return blob;
+  } finally {
     restoreImages(replacements);
     Object.assign(canvas.style, saved);
     fitCanvas();
   }
+}
+
+async function exportPNG(scale = 2){
+  showToast('正在加载素材…', 0);
+  try {
+    showToast('正在生成图片…', 0);
+    const blob = await renderToBlob(scale);
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
+    const isSA = (navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
+    hideToast();
+    const blobURL = URL.createObjectURL(blob);
+    if (isMobile || isSA) {
+      showSaveOverlay(blobURL, blob);
+    } else {
+      const a = document.createElement('a'); a.href = blobURL; a.download = 'mockup-' + Date.now() + '.png'; a.click();
+      setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
+    }
+  } catch(e){ console.error(e); showToast('导出失败：'+e.message, 4000); }
+}
+
+// 批量导出：一次选 N 张壁纸，按当前模板的设备台数自动分组，
+// 每组壁纸填满各台手机屏幕，自动导出多张样机图。
+async function batchExportWallpapers(){
+  const devCount = curTpl().devices.length;
+  const oldWallpapers = S.wallpapers.slice();
+  pickImages(async urls => {
+    if (!urls.length) return;
+    if (devCount === 1) {
+      // 单设备模板：直接作为多张壁纸的批量导出
+      const n = urls.length;
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
+      for (let i = 0; i < n; i++) {
+        showToast(`正在导出第 ${i+1}/${n} 张…`, 0);
+        S.wallpapers = [urls[i]];
+        renderCanvas();
+        await new Promise(r => setTimeout(r, 200)); // 等待壁纸渲染稳定
+        const blob = await renderToBlob(2);
+        if (isMobile) {
+          const blobURL = URL.createObjectURL(blob);
+          showSaveOverlay(blobURL, blob);
+        } else {
+          const blobURL = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}-${i+1}.png`; a.click();
+          setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
+        }
+      }
+    } else {
+      // 多设备模板：每 devCount 张一组，组内每台手机分配一张，导出一张图
+      const groups = [];
+      for (let i = 0; i < urls.length; i += devCount) {
+        groups.push(urls.slice(i, i + devCount));
+      }
+      const n = groups.length;
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
+      for (let g = 0; g < n; g++) {
+        showToast(`正在导出第 ${g+1}/${n} 张…`, 0);
+        // 该组壁纸：填满各台设备（不足的用模板默认壁纸占位，防止个别手机空白）
+        const group = groups[g];
+        S.wallpapers = [];
+        for (let d = 0; d < devCount; d++) {
+          S.wallpapers.push(group[d] || curTpl().devices[d].sc.wallpaperImage || '');
+        }
+        renderCanvas();
+        await new Promise(r => setTimeout(r, 200));
+        const blob = await renderToBlob(2);
+        if (isMobile) {
+          const blobURL = URL.createObjectURL(blob);
+          showSaveOverlay(blobURL, blob);
+        } else {
+          const blobURL = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}-${g+1}.png`; a.click();
+          setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
+        }
+      }
+    }
+    // 导出结束，恢复用户原有的壁纸设置
+    S.wallpapers = oldWallpapers;
+    renderCanvas();
+    hideToast();
+    showToast('批量导出完成', 3000);
+  });
 }
 // 导出图片预览浮层：长按图片 → 存储图像 / 共享
 function showSaveOverlay(imgURL, blob){
@@ -1131,14 +1199,8 @@ function init(){
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveState(); });
   $('btnExport').onclick = () => exportPNG(2);
   $('btnBatch').onclick = async () => {
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
-    if (isMobile) {
-      // 移动端只导一张 2x（避免连续弹两次浮层/分享面板）
-      await exportPNG(2);
-    } else {
-      await exportPNG(1);
-      setTimeout(() => exportPNG(2), 500);
-    }
+    // 真正的批量导出：一次选多张壁纸，按模板设备台数分组，自动导出多张样机图
+    await batchExportWallpapers();
   };
   $('btnSave').onclick = () => { const r = saveState(); showToast(r === false ? '保存失败：本机存储空间不足' : '已保存到本机，下次打开自动恢复'); };
 }
