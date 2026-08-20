@@ -206,6 +206,45 @@ main { flex:1; display:flex; overflow:hidden; }
 #batchPanel .bp-item .bp-save { background:var(--primary); color:#fff; border:none; padding:7px 14px; border-radius:8px; font-size:13px; cursor:pointer; -webkit-tap-highlight-color:transparent; flex-shrink:0; }
 #batchPanel .bp-item .bp-save:active { opacity:.8; }
 
+/* ========== 画布结果画廊：批量导出后结果直接显示在画布上，可滑动查看 ========== */
+#galleryView { position:absolute; inset:0; z-index:700; background:#fff; display:none; align-items:center; justify-content:center; overflow:hidden; }
+#galleryView.show { display:flex; }
+#galleryView #galleryImg { max-width:100%; max-height:100%; object-fit:contain; user-select:none; -webkit-user-select:none; }
+#galleryBar { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:801; display:none; align-items:center; gap:8px; background:rgba(255,255,255,.95); box-shadow:0 6px 24px rgba(0,0,0,.16); border-radius:14px; padding:6px 10px; }
+#galleryBar.show { display:flex; }
+#galleryBar .gb-nav { display:flex; align-items:center; gap:6px; }
+#galleryBar .gb-arrow { width:34px; height:34px; border:none; border-radius:9px; background:#f1f2f5; color:#333; font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center; -webkit-tap-highlight-color:transparent; }
+#galleryBar .gb-arrow:active { background:#e2e4ea; }
+#galleryBar .gb-arrow:disabled { opacity:.35; }
+#galleryBar .gb-count { min-width:64px; text-align:center; font-size:13px; color:#555; font-weight:600; }
+#galleryBar .gb-sep { width:1px; height:22px; background:#e3e4ea; }
+#galleryBar .gb-action { border:none; border-radius:9px; padding:8px 14px; font-size:13px; cursor:pointer; -webkit-tap-highlight-color:transparent; white-space:nowrap; }
+#galleryBar .gb-save { background:var(--primary); color:#fff; font-weight:600; min-width:96px; }
+#galleryBar .gb-save:active { opacity:.85; }
+#galleryBar .gb-reselect { background:#fff; color:var(--primary); border:1px solid var(--primary); }
+#galleryBar .gb-exit { background:#f1f2f5; color:#555; }
+#galleryStrip { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); z-index:800; display:none; align-items:center; gap:8px; background:rgba(255,255,255,.92); box-shadow:0 6px 24px rgba(0,0,0,.16); border-radius:12px; padding:7px 10px; max-width:94%; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+#galleryStrip::-webkit-scrollbar { display:none; }
+#galleryStrip.show { display:flex; }
+#galleryStrip .gs-thumb { flex-shrink:0; width:52px; height:52px; border-radius:8px; overflow:hidden; border:2px solid transparent; cursor:pointer; -webkit-tap-highlight-color:transparent; position:relative; }
+#galleryStrip .gs-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+#galleryStrip .gs-thumb.on { border-color:var(--primary); }
+#galleryStrip .gs-thumb .gs-idx { position:absolute; left:2px; top:2px; font-size:10px; color:#fff; background:rgba(0,0,0,.55); border-radius:4px; padding:0 4px; line-height:14px; }
+
+/* 手机端画廊工具条改为可换行，更易点按 */
+@media (max-width:860px){
+  #galleryBar { top:6px; padding:5px 6px; gap:5px; flex-wrap:wrap; max-width:calc(100% - 12px); justify-content:center; }
+  #galleryBar .gb-nav { gap:4px; }
+  #galleryBar .gb-arrow { width:32px; height:32px; font-size:16px; }
+  #galleryBar .gb-count { min-width:48px; font-size:12px; }
+  #galleryBar .gb-sep { display:none; }
+  #galleryBar .gb-save { min-width:80px; padding:7px 10px; font-size:12px; }
+  #galleryBar .gb-reselect { padding:7px 10px; font-size:12px; }
+  #galleryBar .gb-exit { padding:7px 10px; font-size:12px; }
+  #galleryStrip { bottom:6px; gap:6px; padding:5px 7px; max-width:calc(100% - 12px); }
+  #galleryStrip .gs-thumb { width:52px; height:52px; }
+}
+
 /* 移动端侧拉抽屉（默认隐藏，仅手机端显示菜单按钮） */
 .header-left { display:flex; align-items:center; gap:8px; }
 .menu-btn { display:none; width:36px; height:36px; margin-left:-6px; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
@@ -274,6 +313,22 @@ body.drawer-open { overflow:hidden; }
       <div class="canvas-wrap" id="canvasWrap">
         <div class="canvas" id="canvas"></div>
       </div>
+      <!-- 批量导出结果画廊：大图查看层 + 工具条 + 缩略图导航 -->
+      <div id="galleryView" aria-label="批量导出结果预览">
+        <img id="galleryImg" alt="导出结果">
+      </div>
+      <div id="galleryBar">
+        <div class="gb-nav">
+          <button class="gb-arrow" id="gbPrev" aria-label="上一张">‹</button>
+          <span class="gb-count" id="gbCount">0 / 0</span>
+          <button class="gb-arrow" id="gbNext" aria-label="下一张">›</button>
+        </div>
+        <div class="gb-sep"></div>
+        <button class="gb-action gb-save" id="gbSave">保存到相册</button>
+        <button class="gb-action gb-reselect" id="gbReselect">重新选择</button>
+        <button class="gb-action gb-exit" id="gbExit">退出</button>
+      </div>
+      <div id="galleryStrip"></div>
     </section>
     <aside class="right-panel">
       <div class="right-tabs" id="rightTabs"></div>
@@ -1163,86 +1218,142 @@ async function batchExportWallpapers(){
     S.wallpapers = finalWalls.slice();
     renderCanvas(); updateRightPanel();
     hideToast();
-    // 一次性把所有结果展示在面板中
-    showBatchResults(blobs, labels, isMobile);
+    // 一次性把所有结果展示在画布画廊中（可左右滑动查看、逐张保存、重新选择）
+    showBatchResults(blobs, labels);
   });
 }
 
-// 批量导出结果面板：一次性展示所有导出图，每张可单独保存/下载，支持重新选择
+// ===================== 画布结果画廊 =====================
+// 批量导出完成后，所有结果图直接显示在画布上（覆盖原编辑画布），
+// 支持左右滑动/箭头/底部缩略图切换查看下一张；每张可单独保存到相册；可重新选择壁纸。
+let GALLERY = { items: [], idx: 0, active: false, touchX: 0, touchY: 0, swipeT: 0 };
+
+function galleryEl(id){ return document.getElementById(id); }
+
+// 显示画廊并切换到第 idx 张
 function showBatchResults(blobs, labels, isMobile){
-  let p = document.getElementById('batchPanel');
-  if (!p) { p = document.createElement('div'); p.id = 'batchPanel'; document.body.appendChild(p); }
-  const total = blobs.length;
-  const head = `
-    <div class="bp-head">
-      <div style="display:flex;align-items:center;"><h3>批量导出结果</h3><span class="bp-count">共 ${total} 张</span></div>
-      <div class="bp-actions">
-        <button class="bp-reselect">重新选择</button>
-        ${!isMobile ? '<button class="bp-download-all">全部下载</button>' : ''}
-        <button class="bp-close">关闭</button>
-      </div>
-    </div>`;
-  let body = '<div class="bp-body">';
-  const objs = []; // 保存 blobURL + blob，便于下载/分享
-  blobs.forEach((b, i) => {
-    const url = URL.createObjectURL(b);
-    objs.push({ url, blob: b });
-    body += `<div class="bp-item">
-      <img src="${url}" alt="导出图${i+1}">
-      <div class="bp-cap">
-        <span>${labels[i] || ('第 '+(i+1)+' 张')}</span>
-        <button class="bp-save" data-i="${i}">${isMobile ? '保存' : '下载'}</button>
-      </div>
-    </div>`;
+  // 释放旧画廊资源
+  galleryExit(true);
+  // 初始化数据
+  GALLERY.items = blobs.map((b, i) => ({ url: URL.createObjectURL(b), blob: b, label: (labels && labels[i]) || ('第 ' + (i+1) + ' 张') }));
+  GALLERY.idx = 0;
+  GALLERY.active = true;
+  // 构建底部缩略图条
+  const strip = galleryEl('galleryStrip');
+  strip.innerHTML = '';
+  GALLERY.items.forEach((o, i) => {
+    const t = document.createElement('div');
+    t.className = 'gs-thumb';
+    t.innerHTML = `<img src="${o.url}"><span class="gs-idx">${i+1}</span>`;
+    t.onclick = () => galleryShow(i);
+    strip.appendChild(t);
   });
-  body += '</div>';
-  p.innerHTML = head + body;
-
-  // 单张保存/下载
-  p.querySelectorAll('.bp-save').forEach(btn => {
-    btn.onclick = () => {
-      const i = +btn.dataset.i;
-      const o = objs[i];
-      if (!o) return;
-      if (isMobile) {
-        // 手机：长按保存更可靠，同时提供系统分享
-        showSaveOverlay(o.url, o.blob);
-      } else {
-        const a = document.createElement('a'); a.href = o.url; a.download = `mockup-${Date.now()}-${i+1}.png`; a.click();
-      }
-    };
-  });
-  // 全部下载（电脑端）：逐个触发，稍加间隔避免浏览器丢弃
-  const dlAll = p.querySelector('.bp-download-all');
-  if (dlAll) {
-    dlAll.onclick = () => {
-      dlAll.textContent = '正在下载…'; dlAll.disabled = true;
-      objs.forEach((o, i) => {
-        setTimeout(() => {
-          const a = document.createElement('a'); a.href = o.url; a.download = `mockup-${Date.now()}-${i+1}.png`; a.click();
-          if (i === objs.length - 1) { dlAll.textContent = '全部下载'; dlAll.disabled = false; }
-        }, i * 350);
-      });
-    };
-  }
-  // 关闭
-  p.querySelector('.bp-close').onclick = () => { p.remove(); objs.forEach(o => URL.revokeObjectURL(o.url)); };
-  // 重新选择壁纸
-  p.querySelector('.bp-reselect').onclick = () => {
-    p.remove(); objs.forEach(o => URL.revokeObjectURL(o.url));
-    setTimeout(() => batchExportWallpapers(), 50);
-  };
+  // 显示界面
+  galleryEl('galleryView').classList.add('show');
+  galleryEl('galleryBar').classList.add('show');
+  strip.classList.add('show');
+  galleryShow(0);
+  showToast(`已生成 ${GALLERY.items.length} 张，左右滑动查看`, 2500);
 }
-// 导出图片预览浮层：长按图片 → 存储图像 / 共享
-function showSaveOverlay(imgURL, blob){
+
+// 切换到第 idx 张
+function galleryShow(idx){
+  if (!GALLERY.active || idx < 0 || idx >= GALLERY.items.length) return;
+  GALLERY.idx = idx;
+  const o = GALLERY.items[idx];
+  const img = galleryEl('galleryImg');
+  img.src = o.url;
+  galleryEl('gbCount').textContent = (idx + 1) + ' / ' + GALLERY.items.length;
+  galleryEl('gbPrev').disabled = (idx === 0);
+  galleryEl('gbNext').disabled = (idx === GALLERY.items.length - 1);
+  // 缩略图高亮 + 滚动到可见
+  const strip = galleryEl('galleryStrip');
+  [...strip.children].forEach((t, i) => t.classList.toggle('on', i === idx));
+  const cur = strip.children[idx];
+  if (cur) cur.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' });
+}
+
+// 保存当前张：优先系统分享（真正存相册），不支持则弹大浮层（长按保存）
+async function gallerySave(){
+  const o = GALLERY.items[GALLERY.idx];
+  if (!o) return;
+  const btn = galleryEl('gbSave');
+  const canShare = !!(navigator.canShare);
+  if (canShare && o.blob) {
+    const file = new File([o.blob], 'mockup-' + Date.now() + '.png', { type: 'image/png' });
+    if (navigator.canShare({ files: [file] })) {
+      btn.textContent = '正在打开…'; btn.disabled = true;
+      try { await navigator.share({ files: [file], title: '壁纸样机', text: '第 ' + (GALLERY.idx + 1) + ' 张' }); }
+      catch(e) { if (e.name !== 'AbortError') { console.error(e); showToast('分享未完成，可长按图片保存', 2500); } }
+      btn.textContent = '保存到相册'; btn.disabled = false;
+      return;
+    }
+  }
+  // 不支持系统分享 → 弹大浮层，长按图片保存
+  showSaveOverlay(o.url, o.blob, '第 ' + (GALLERY.idx + 1) + ' 张');
+}
+
+// 退出画廊：释放所有 blobURL，恢复编辑画布
+function galleryExit(silent){
+  const v = galleryEl('galleryView'), bar = galleryEl('galleryBar'), strip = galleryEl('galleryStrip');
+  v.classList.remove('show'); bar.classList.remove('show'); strip.classList.remove('show');
+  galleryEl('galleryImg').removeAttribute('src');
+  strip.innerHTML = '';
+  if (GALLERY.items) GALLERY.items.forEach(o => { try { URL.revokeObjectURL(o.url); } catch(e){} });
+  GALLERY.items = []; GALLERY.idx = 0; GALLERY.active = false;
+  if (!silent) renderCanvas(); // 回到编辑态画布
+}
+
+// 重新选择壁纸：退出画廊后重新走批量选择流程
+function galleryReselect(){
+  galleryExit(true);
+  setTimeout(() => batchExportWallpapers(), 60);
+}
+
+// 绑定画廊交互（箭头、缩略图切换、保存、重新选择、退出、触摸滑动）
+function setupGallery(){
+  galleryEl('gbPrev').onclick = () => galleryShow(GALLERY.idx - 1);
+  galleryEl('gbNext').onclick = () => galleryShow(GALLERY.idx + 1);
+  galleryEl('gbSave').onclick = gallerySave;
+  galleryEl('gbReselect').onclick = galleryReselect;
+  galleryEl('gbExit').onclick = () => galleryExit(false);
+  // 触摸左右滑动切换
+  const v = galleryEl('galleryView');
+  v.addEventListener('touchstart', e => {
+    GALLERY.touchX = e.touches[0].clientX; GALLERY.touchY = e.touches[0].clientY; GALLERY.swipeT = Date.now();
+  }, { passive: true });
+  v.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - GALLERY.touchX;
+    const dy = e.changedTouches[0].clientY - GALLERY.touchY;
+    const dt = Date.now() - GALLERY.swipeT;
+    // 快速水平滑动（大于40px，水平为主，时长<500ms）
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && dt < 500) {
+      if (dx < 0) galleryShow(GALLERY.idx + 1);   // 左滑 → 下一张
+      else galleryShow(GALLERY.idx - 1);          // 右滑 → 上一张
+    }
+  }, { passive: true });
+  // 桌面端也支持左右方向键
+  document.addEventListener('keydown', e => {
+    if (!GALLERY.active) return;
+    if (e.key === 'ArrowRight') { galleryShow(GALLERY.idx + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { galleryShow(GALLERY.idx - 1); e.preventDefault(); }
+    else if (e.key === 'Escape') { galleryExit(false); }
+  });
+}
+
+// 导出图片预览浮层：大图 + 足够大的保存按钮（长按图片存储 / 系统分享）
+function showSaveOverlay(imgURL, blob, cap){
   let ov = document.getElementById('saveOverlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'saveOverlay'; document.body.appendChild(ov); }
-  let html = '<img src="' + imgURL + '"><div class="tip">长按上方图片 → 选择「存储图像」保存到相册<br>或点下方按钮直接分享/保存</div>';
+  const tip = cap ? ('当前为第 ' + cap + '，请保存后再切换下一张') : '';
+  let html = '<img src="' + imgURL + '">';
+  html += '<div class="tip">' + tip + '<br>方法一：长按上方图片 → 选「存储图像」<br>方法二：点下方按钮保存</div>';
   if (blob && navigator.canShare) {
     html += '<button class="share-btn">保存到相册</button>';
   }
   html += '<button class="close">关闭</button>';
   ov.innerHTML = html;
+  ov.style.zIndex = '9999';
   ov.querySelector('.close').onclick = () => { ov.remove(); URL.revokeObjectURL(imgURL); };
   if (blob && navigator.canShare) {
     const btn = ov.querySelector('.share-btn');
@@ -1299,6 +1410,7 @@ function init(){
   window.addEventListener('resize', fitCanvas);
   window.addEventListener('beforeunload', saveState);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveState(); });
+  setupGallery(); // 绑定画布结果画廊交互
   $('btnExport').onclick = () => exportPNG(2);
   $('btnBatch').onclick = async () => {
     // 真正的批量导出：一次选多张壁纸，按模板设备台数分组，自动导出多张样机图
