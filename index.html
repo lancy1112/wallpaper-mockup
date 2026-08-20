@@ -1207,55 +1207,57 @@ async function renderToBlob(scale = 2){
     if (typeof html2canvas === 'undefined') throw new Error('图片库未加载，请刷新页面重试');
     // 预加载 CDN 图片 → data URL，消除跨域问题
     replacements = await preloadCDNImages(canvas);
-    // iOS/iPadOS：html2canvas 在 Safari 上易渲染失败/超时，优先用 SVG foreignObject 方案（原版网站同款）
-    if (isIOS && typeof htmlToImage !== 'undefined') {
+    // iOS/iPadOS 兜底：html2canvas 若失败/超时，再用 SVG foreignObject 方案重试。
+    // 经验上新版 html2canvas（已打好 CSS 分词器补丁、壁纸改用 <img>）在 iPad 上更可靠。
+    const tryForeignObject = async (sc) => {
+      if (!isIOS || typeof htmlToImage === 'undefined') return null;
       const foOpts = (pr) => ({ pixelRatio: pr, backgroundColor: null, skipFonts: true, cacheBust: false });
       let wrapper = null;
       try {
-        // html-to-image 会保留原节点的定位/偏移样式；若原画布在 -9999px 外，会渲染成透明图。
-        // 所以创建一个干净克隆：继承已预加载的 data URL 资源，但重置定位。
         showToast('正在准备渲染…', 0);
         const clone = canvas.cloneNode(true);
         clone.style.cssText = (clone.style.cssText || '') + ';position:relative;left:0;top:0;margin:0;padding:0;transform:none;z-index:0;visibility:visible;opacity:1;';
         wrapper = document.createElement('div');
-        // 用 fixed 离屏容器：不占用布局/不触发滚动，也不限制宽高或裁剪内容
         wrapper.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;';
         wrapper.appendChild(clone);
         document.body.appendChild(wrapper);
-        // 逐级降分辨率尝试，每档都做像素级空白检测
-        const prList = [scale];
-        if (scale > 1.5) prList.push(1.5);
-        if (scale > 1) prList.push(1);
+        const prList = [sc];
+        if (sc > 1.5) prList.push(1.5);
+        if (sc > 1) prList.push(1);
         for (const pr of prList) {
-          showToast(pr < scale ? `正在用 ${pr}x 重试…` : '正在生成图片…', 0);
+          showToast(pr < sc ? `正在用 ${pr}x 重试…` : '正在生成图片…', 0);
           try {
             const b = await Promise.race([
               htmlToImage.toBlob(clone, foOpts(pr)),
               new Promise((_, rj) => setTimeout(() => rj(new Error('foreignObject 超时')), 60000))
             ]);
-            if (b && b.size > 2000 && !(await blobIsBlank(b))) { if (wrapper) wrapper.remove(); return b; }
+            if (b && b.size > 2000 && !(await blobIsBlank(b))) return b;
             console.warn(`foreignObject ${pr}x 输出为空或空白，降级重试`);
           } catch(e) { console.warn(`foreignObject ${pr}x 失败:`, e.message); }
         }
-        console.warn('foreignObject 全部失败/空白，回退 html2canvas');
-      } catch(e) { console.warn('foreignObject 方案异常，回退 html2canvas:', e.message); }
-      finally { if (wrapper) wrapper.remove(); }
+        return null;
+      } finally { if (wrapper) wrapper.remove(); }
+    };
+    // 统一先走 html2canvas（已修复栈溢出、壁纸改 <img>，iPad 上通常更稳）
+    let blob = null, h2cErr = null;
+    try {
+      const renderP = html2canvas(canvas, { scale, useCORS: false, allowTaint: false, backgroundColor: null, logging: false });
+      const timeoutP = new Promise((_, reject) => setTimeout(() => reject(new Error('生成超时，请减少设备数量或降低分辨率后重试')), 60000));
+      const c = await Promise.race([renderP, timeoutP]);
+      try { blob = await new Promise(res => c.toBlob(res, 'image/png')); } catch(e) { console.warn('toBlob失败', e); }
+      if (!blob) {
+        try {
+          const dataURL = c.toDataURL('image/png');
+          if (dataURL && dataURL.length > 200) blob = await (await fetch(dataURL)).blob();
+        } catch(e) { console.warn('toDataURL兜底也失败', e); }
+      }
+      if (blob && await blobIsBlank(blob)) { console.warn('html2canvas 输出空白，尝试 foreignObject'); blob = null; }
+    } catch(e) { h2cErr = e; console.warn('html2canvas 失败:', e.message); }
+    // iOS 设备 html2canvas 失败时，降级到 html-to-image foreignObject 方案
+    if (!blob && isIOS) {
+      blob = await tryForeignObject(scale);
     }
-    // 超时保护：60 秒未完成则报错，避免永久卡住
-    const renderP = html2canvas(canvas, { scale, useCORS: false, allowTaint: false, backgroundColor: null, logging: false });
-    const timeoutP = new Promise((_, reject) => setTimeout(() => reject(new Error('生成超时，请减少设备数量或降低分辨率后重试')), 60000));
-    const c = await Promise.race([renderP, timeoutP]);
-    let blob = null;
-    try { blob = await new Promise(res => c.toBlob(res, 'image/png')); } catch(e) { console.warn('toBlob失败', e); }
-    // toBlob 超限返回 null 时，用 toDataURL 兜底（部分浏览器两者限制不同）
-    if (!blob) {
-      try {
-        const dataURL = c.toDataURL('image/png');
-        if (dataURL && dataURL.length > 200) blob = await (await fetch(dataURL)).blob();
-      } catch(e) { console.warn('toDataURL兜底也失败', e); }
-    }
-    if (!blob) throw new Error('生成图片失败（画布尺寸超出浏览器限制）');
-    if (await blobIsBlank(blob)) throw new Error('生成结果为空白');
+    if (!blob) throw h2cErr || new Error('生成图片失败（画布尺寸超出浏览器限制）');
     return blob;
   } finally {
     restoreImages(replacements);
@@ -1282,7 +1284,7 @@ async function exportPNG(scale = 2){
     hideToast();
     const blobURL = URL.createObjectURL(blob);
     if (isMobile || isSA) {
-      showSaveOverlay(blobURL, blob);
+      await showSaveOverlay(blobURL, blob);
     } else {
       const a = document.createElement('a'); a.href = blobURL; a.download = 'mockup-' + Date.now() + '.png'; a.click();
       setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
@@ -1481,34 +1483,49 @@ function setupGallery(){
 }
 
 // 导出图片预览浮层：大图 + 足够大的保存按钮（长按图片存储 / 系统分享）
-function showSaveOverlay(imgURL, blob, cap){
+async function showSaveOverlay(imgURL, blob, cap){
   let ov = document.getElementById('saveOverlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'saveOverlay'; document.body.appendChild(ov); }
   const tip = cap ? ('当前为第 ' + cap + '，请保存后再切换下一张') : '';
-  let html = '<img src="' + imgURL + '">';
-  html += '<div class="tip">' + tip + '<br>方法一：长按上方图片 → 选「存储图像」<br>方法二：点下方按钮保存</div>';
-  if (blob && navigator.canShare) {
-    html += '<button class="share-btn">保存到相册</button>';
+  // iOS/Safari 对 blob URL 在 <img> 和 Web Share 中都有兼容性限制，转成 data URL 更稳。
+  // 如果传入的已经是 data URL 则直接用。
+  let dataURL = imgURL;
+  if (blob && !imgURL.startsWith('data:')) {
+    try {
+      dataURL = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+    } catch(e) { console.warn('blob 转 dataURL 失败', e); }
   }
+  let html = '<img src="' + dataURL + '" id="__saveImg">';
+  html += '<div class="tip">' + tip + '<br>方法一：长按上方图片 → 选「存储图像」<br>方法二：点击下方按钮保存</div>';
+  html += '<button class="share-btn">保存到相册</button>';
   html += '<button class="close">关闭</button>';
   ov.innerHTML = html;
   ov.style.zIndex = '9999';
-  ov.querySelector('.close').onclick = () => { ov.remove(); URL.revokeObjectURL(imgURL); };
-  if (blob && navigator.canShare) {
-    const btn = ov.querySelector('.share-btn');
-    btn.onclick = async () => {
-      btn.textContent = '正在打开…'; btn.disabled = true;
+  ov.querySelector('.close').onclick = () => { ov.remove(); if (imgURL.startsWith('blob:')) URL.revokeObjectURL(imgURL); };
+  const btn = ov.querySelector('.share-btn');
+  btn.onclick = async () => {
+    btn.textContent = '正在打开…'; btn.disabled = true;
+    let shared = false;
+    // 先尝试原生系统分享（iOS 13+ 支持文件分享）
+    if (blob && navigator.canShare) {
       try {
         const file = new File([blob], 'mockup-' + Date.now() + '.png', { type: 'image/png' });
         if (navigator.canShare({ files: [file] })) {
           await navigator.share({ files: [file], title: '壁纸样机' });
+          shared = true;
         }
       } catch(e) {
-        if (e.name !== 'AbortError') { console.error(e); showToast('分享失败，请长按图片保存', 3000); }
+        if (e.name !== 'AbortError') { console.warn('Web Share 失败，降级打开图片', e); }
+        else { shared = true; } // 用户取消也算完成
       }
-      btn.textContent = '保存到相册'; btn.disabled = false;
-    };
-  }
+    }
+    // 若分享未成功/不支持，打开 data URL 新标签页，用户可长按保存
+    if (!shared) {
+      const w = window.open(dataURL, '_blank');
+      if (!w) showToast('请长按上方图片保存到相册', 4000);
+    }
+    btn.textContent = '保存到相册'; btn.disabled = false;
+  };
 }
 
 // ============== 移动端侧拉抽屉 ==============
