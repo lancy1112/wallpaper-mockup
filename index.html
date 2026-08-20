@@ -721,7 +721,7 @@ function renderPhonePanel(c, tpl){
   PHONE_SUBS.forEach(s => { h += `<div class="chip${S.phoneSubTab===s.k?' on':''}" data-sub="${s.k}">${s.n}</div>`; });
   h += `</div>`;
   // 壁纸上传（支持多选，每台设备对应一张）
-  h += `<div class="row"><div class="lbl">在这里上传您的壁纸</div></div>`;
+  h += `<div class="row" style="display:flex;justify-content:space-between;align-items:center;"><div class="lbl" style="margin:0">在这里上传您的壁纸</div><span class="btn" id="btnClearWp" style="font-size:11px;padding:5px 10px;color:#dc2626;flex-shrink:0;">清空壁纸</span></div>`;
   h += `<div class="row wp-thumb-row">`;
   S.wallpapers.forEach((url, i) => {
     h += `<div class="wp-thumb" data-wp-idx="${i}" title="点击更换这张壁纸" style="background-image:url(${url})"><span class="wp-del" data-wp-idx="${i}">×</span></div>`;
@@ -774,10 +774,18 @@ function bindPhonePanel(){
   // 系统颜色开关
   document.querySelectorAll('#tabContent .sys-switch').forEach(el => el.onclick = () => { const k = el.dataset.sys; S[k] = !S[k]; renderCanvas(); updateRightPanel(); });
   document.querySelectorAll('#tabContent .switch[data-key]').forEach(s => s.onclick = () => { const k=s.dataset.key; S[k]=!S[k]; s.classList.toggle('on', S[k]); renderCanvas(); });
+  if ($('btnClearWp')) $('btnClearWp').onclick = () => {
+    if (S.wallpapers.length === 0) { showToast('当前没有壁纸'); return; }
+    if (!confirm('确定清空当前已上传的全部壁纸吗？')) return;
+    S.wallpapers = []; renderCanvas(); updateRightPanel(); showToast('已清空壁纸');
+  };
   if ($('wpUpload')) $('wpUpload').onclick = () => pickImages(urls => {
     const n = curTpl().devices.length;
     if (urls.length === 1 && S.autoSync) {
       // 单张+自动同步：所有设备使用同一张壁纸
+      S.wallpapers = Array(n).fill(urls[0]);
+    } else if (urls.length === 1 && n > 1 && S.wallpapers.length === 0) {
+      // 多设备模板只选了1张：默认所有手机都用这张（避免只填第1台，其余空白）
       S.wallpapers = Array(n).fill(urls[0]);
     } else if (S.wallpapers.length >= n) {
       // 壁纸数已满：从头替换对应位置，保证再次上传能更新界面（而不是无效追加）
@@ -1070,16 +1078,18 @@ async function exportPNG(scale = 2){
 }
 
 // 批量导出：一次选 N 张壁纸，按当前模板的设备台数自动分组，
-// 每组壁纸填满各台手机屏幕，自动导出多张样机图。
+// 每组壁纸填满各台手机屏幕，自动导出多张样机图。导出后壁纸保留在界面，方便继续使用。
 async function batchExportWallpapers(){
   const devCount = curTpl().devices.length;
-  const oldWallpapers = S.wallpapers.slice();
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
+  showToast('请选择多张壁纸（手机上长按相册缩略图可多选）', 3500);
   pickImages(async urls => {
     if (!urls.length) return;
+    // 本次选中的壁纸，导出后直接作为当前壁纸保留在界面上
+    let finalWalls = [];
     if (devCount === 1) {
-      // 单设备模板：直接作为多张壁纸的批量导出
+      // 单设备模板：N 张壁纸逐张导出 N 张图
       const n = urls.length;
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
       for (let i = 0; i < n; i++) {
         showToast(`正在导出第 ${i+1}/${n} 张…`, 0);
         S.wallpapers = [urls[i]];
@@ -1095,14 +1105,30 @@ async function batchExportWallpapers(){
           setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
         }
       }
+      finalWalls.push(urls[urls.length - 1]); // 保留最后一张作为当前壁纸
+    } else if (urls.length === 1) {
+      // 多设备模板只选了1张：所有手机都用这张，导出1张图
+      showToast('正在导出…', 0);
+      S.wallpapers = Array(devCount).fill(urls[0]);
+      renderCanvas();
+      await new Promise(r => setTimeout(r, 200));
+      const blob = await renderToBlob(2);
+      if (isMobile) {
+        const blobURL = URL.createObjectURL(blob);
+        showSaveOverlay(blobURL, blob);
+      } else {
+        const blobURL = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}.png`; a.click();
+        setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
+      }
+      finalWalls = Array(devCount).fill(urls[0]);
     } else {
-      // 多设备模板：每 devCount 张一组，组内每台手机分配一张，导出一张图
+      // 多设备模板选了多张：每 devCount 张一组，组内每台手机分配一张，导出一张图
       const groups = [];
       for (let i = 0; i < urls.length; i += devCount) {
         groups.push(urls.slice(i, i + devCount));
       }
       const n = groups.length;
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
       for (let g = 0; g < n; g++) {
         showToast(`正在导出第 ${g+1}/${n} 张…`, 0);
         // 该组壁纸：填满各台设备（不足的用模板默认壁纸占位，防止个别手机空白）
@@ -1122,13 +1148,15 @@ async function batchExportWallpapers(){
           const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}-${g+1}.png`; a.click();
           setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
         }
+        // 最后一组作为当前界面的壁纸
+        if (g === n - 1) { finalWalls = S.wallpapers.slice(); }
       }
     }
-    // 导出结束，恢复用户原有的壁纸设置
-    S.wallpapers = oldWallpapers;
-    renderCanvas();
+    // 导出结束后，把最后导出的这组壁纸保留为当前壁纸，方便直接看到效果
+    S.wallpapers = finalWalls.slice();
+    renderCanvas(); updateRightPanel();
     hideToast();
-    showToast('批量导出完成', 3000);
+    showToast('批量导出完成，壁纸已应用到界面', 3500);
   });
 }
 // 导出图片预览浮层：长按图片 → 存储图像 / 共享
