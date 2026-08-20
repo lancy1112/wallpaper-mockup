@@ -151,13 +151,16 @@ main { flex:1; display:flex; overflow:hidden; }
 .wifi svg { display:block; }
 .dynamic-island { position:absolute; top:12px; left:50%; transform:translateX(-50%); width:94px; height:28px; background:#000; border-radius:14px; z-index:30; }
 .date-time { position:absolute; z-index:20; display:flex; flex-direction:column; align-items:center; color:#fff; text-align:center; line-height:1.1; }
-.date-time .time { font-family:-apple-system,BlinkMacSystemFont,sans-serif; font-weight:300; letter-spacing:-1px; }
-.date-time .date { font-size:15px; margin-top:6px; opacity:.9; }
+.date-time .date { font-size:15px; font-weight:600; letter-spacing:.3px; margin-bottom:4px; opacity:.95; text-shadow:0 2px 10px rgba(0,0,0,0.35); }
+.date-time .time-wrap { position:relative; }
+.date-time .time { font-family:-apple-system,BlinkMacSystemFont,sans-serif; font-weight:300; letter-spacing:-1px; white-space:nowrap; }
+/* iOS 26 Liquid Glass 时钟：数字本体玻璃质感（主体层 + 顶部高光层叠加，html2canvas 导出兼容） */
+.date-time .time-main { position:relative; z-index:1; color:rgba(255,255,255,0.95); text-shadow:0 6px 18px rgba(0,0,0,0.38); }
+.date-time .time-shine { position:absolute; left:0; top:0; width:100%; color:rgba(255,255,255,0.32); transform:translateY(-4%); pointer-events:none; z-index:2; }
 
 /* iOS 26 Liquid Glass 液态玻璃（导出兼容：html2canvas 不支持 backdrop-filter/inset阴影/伪元素，
    用真实 DOM 光泽层 + 多层渐变模拟玻璃质感） */
 .lg-gloss { position:absolute; left:8%; top:3px; width:84%; height:48%; border-radius:999px; background:linear-gradient(180deg, rgba(255,255,255,0.52), rgba(255,255,255,0)); pointer-events:none; z-index:0; }
-.date-time.lg-glass { padding:16px 30px 14px; border-radius:999px; background:linear-gradient(165deg, rgba(255,255,255,0.34), rgba(255,255,255,0.10) 42%, rgba(255,255,255,0.18) 62%, rgba(255,255,255,0.06)); border:1px solid rgba(255,255,255,0.42); box-shadow:0 12px 32px rgba(0,0,0,0.25); }
 .date-time.lg-glass .time, .date-time.lg-glass .date { position:relative; z-index:1; text-shadow:0 2px 14px rgba(0,0,0,0.38); }
 
 /* 锁屏底部玻璃按钮（手电筒/相机） */
@@ -710,19 +713,23 @@ function renderDevice(container, dev, idx){
     screen.appendChild(island);
   }
 
-  // 日期时间（锁屏模式）— iOS 26 Liquid Glass 玻璃时钟
+  // 日期时间（锁屏模式）— iOS 26 布局：日期在时间上方，时钟数字为液态玻璃质感（主体+高光双层叠加）
   if (S.phoneSubTab === 'lock' && S.showDateTime) {
-    const dt = document.createElement('div'); dt.className = 'date-time lg-glass';
+    const dt = document.createElement('div'); dt.className = 'date-time';
     mergeCss(dt, '', st.dateTime);
-    // 顶部光泽层（真实 DOM，html2canvas 可渲染）
-    const dtGloss = document.createElement('div'); dtGloss.className = 'lg-gloss'; dt.appendChild(dtGloss);
-    const time = document.createElement('div'); time.className = 'time'; time.textContent = S.timeText;
-    mergeCss(time, '', st.time);
-    const timeStyleCss = ['font-size:68px;font-weight:300;','font-size:68px;font-weight:700;letter-spacing:2px;','font-size:68px;font-family:SFMono-Regular,Menlo,monospace;font-weight:500;','font-size:52px;font-weight:200;'][S.timeStyle] || '';
-    mergeCss(time, '', timeStyleCss);
-    const date = document.createElement('div'); date.className = 'date'; date.textContent = S.dateText + ' ' + S.weekdayText;
+    const date = document.createElement('div'); date.className = 'date';
+    date.textContent = (S.dateText || '') + (S.weekdayText ? ' ' + S.weekdayText : '');
     mergeCss(date, '', st.date);
-    dt.appendChild(time); dt.appendChild(date); screen.appendChild(dt);
+    dt.appendChild(date);
+    const tw = document.createElement('div'); tw.className = 'time-wrap';
+    const timeStyleCss = ['font-size:68px;font-weight:300;','font-size:68px;font-weight:700;letter-spacing:2px;','font-size:68px;font-family:SFMono-Regular,Menlo,monospace;font-weight:500;','font-size:52px;font-weight:200;'][S.timeStyle] || '';
+    const timeMain = document.createElement('div'); timeMain.className = 'time time-main'; timeMain.textContent = S.timeText;
+    mergeCss(timeMain, '', st.time); mergeCss(timeMain, '', timeStyleCss);
+    const timeShine = document.createElement('div'); timeShine.className = 'time time-shine'; timeShine.textContent = S.timeText;
+    mergeCss(timeShine, '', st.time); mergeCss(timeShine, '', timeStyleCss);
+    tw.appendChild(timeMain); tw.appendChild(timeShine);
+    dt.appendChild(tw);
+    screen.appendChild(dt);
   }
 
   // 底部条：清理模板里的 left/scale/transform/z-index/top，强制水平居中
