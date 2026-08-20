@@ -1129,8 +1129,16 @@ async function renderToBlob(scale = 2){
     const renderP = html2canvas(canvas, { scale, useCORS: false, allowTaint: false, backgroundColor: null, logging: false });
     const timeoutP = new Promise((_, reject) => setTimeout(() => reject(new Error('生成超时，请减少设备数量或降低分辨率后重试')), 30000));
     const c = await Promise.race([renderP, timeoutP]);
-    const blob = await new Promise(res => c.toBlob(res, 'image/png'));
-    if (!blob) throw new Error('生成图片失败');
+    let blob = null;
+    try { blob = await new Promise(res => c.toBlob(res, 'image/png')); } catch(e) { console.warn('toBlob失败', e); }
+    // toBlob 超限返回 null 时，用 toDataURL 兜底（部分浏览器两者限制不同）
+    if (!blob) {
+      try {
+        const dataURL = c.toDataURL('image/png');
+        if (dataURL && dataURL.length > 200) blob = await (await fetch(dataURL)).blob();
+      } catch(e) { console.warn('toDataURL兜底也失败', e); }
+    }
+    if (!blob) throw new Error('生成图片失败（画布尺寸超出浏览器限制）');
     return blob;
   } finally {
     restoreImages(replacements);
@@ -1142,8 +1150,16 @@ async function renderToBlob(scale = 2){
 async function exportPNG(scale = 2){
   showToast('正在加载素材…', 0);
   try {
-    showToast('正在生成图片…', 0);
-    const blob = await renderToBlob(scale);
+    let blob = null, lastErr = null;
+    // 失败自动降级重试：scale → scale-1 → 1（应对浏览器 canvas 尺寸/内存限制）
+    for (let s = scale; s >= 1; s--) {
+      try {
+        showToast(s < scale ? `分辨率过高，正在用 ${s}x 重试…` : '正在生成图片…', 0);
+        blob = await renderToBlob(s);
+        break;
+      } catch(e) { lastErr = e; console.warn(`导出 ${s}x 失败:`, e.message); }
+    }
+    if (!blob) throw lastErr || new Error('生成图片失败');
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
     const isSA = (navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
     hideToast();
