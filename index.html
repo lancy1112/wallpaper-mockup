@@ -1113,6 +1113,13 @@ function restoreImages(replacements){ if(!replacements) return; for(const r of r
 // 核心渲染：把当前画布渲染成 PNG blob（不弹 UI），供单张导出与批量导出共用
 async function renderToBlob(scale = 2){
   const canvas = $('canvas');
+  // 画布面积保护：iOS/iPadOS Safari 对 canvas 有面积限制（约16MP），超限 toBlob 会静默返回 null
+  // iPadOS 13+ 的 iPad 会伪装成 Mac UA，需用触摸点数辅助判断
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const MAX_AREA = isIOS ? 11900000 : 268000000;
+  const origScale = scale;
+  while (scale > 1 && S.bgW * scale * S.bgH * scale > MAX_AREA) scale -= 0.5;
+  if (scale !== origScale) showToast(`为兼容此设备，导出分辨率自动调整为 ${scale}x`, 2500);
   // 移出可视区并移除缩放，确保导出原始尺寸（不用 opacity:0，会导致 html2canvas 渲染空白）
   const saved = { transform: canvas.style.transform, position: canvas.style.position, left: canvas.style.left, top: canvas.style.top, zIndex: canvas.style.zIndex };
   canvas.style.transform = 'none';
@@ -1127,7 +1134,7 @@ async function renderToBlob(scale = 2){
     replacements = await preloadCDNImages(canvas);
     // 超时保护：30 秒未完成则报错，避免永久卡住
     const renderP = html2canvas(canvas, { scale, useCORS: false, allowTaint: false, backgroundColor: null, logging: false });
-    const timeoutP = new Promise((_, reject) => setTimeout(() => reject(new Error('生成超时，请减少设备数量或降低分辨率后重试')), 30000));
+    const timeoutP = new Promise((_, reject) => setTimeout(() => reject(new Error('生成超时，请减少设备数量或降低分辨率后重试')), 60000));
     const c = await Promise.race([renderP, timeoutP]);
     let blob = null;
     try { blob = await new Promise(res => c.toBlob(res, 'image/png')); } catch(e) { console.warn('toBlob失败', e); }
