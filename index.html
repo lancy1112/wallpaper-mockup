@@ -187,6 +187,25 @@ main { flex:1; display:flex; overflow:hidden; }
 #saveOverlay .share-btn { background:var(--primary); color:#fff; }
 #saveOverlay .close { background:#555; color:#fff; }
 
+/* 批量导出结果面板：一次性展示所有导出图，可逐张保存/下载，支持重新选择 */
+#batchPanel { position:fixed; inset:0; background:rgba(20,20,28,.94); z-index:9999; display:flex; flex-direction:column; }
+#batchPanel .bp-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; color:#fff; border-bottom:1px solid rgba(255,255,255,.12); flex-shrink:0; }
+#batchPanel .bp-head h3 { margin:0; font-size:16px; font-weight:600; }
+#batchPanel .bp-head .bp-count { font-size:13px; color:#b9b9c4; margin-left:8px; }
+#batchPanel .bp-actions { display:flex; gap:8px; align-items:center; }
+#batchPanel .bp-actions button { padding:8px 14px; border:none; border-radius:9px; font-size:13px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+#batchPanel .bp-close { background:#4a4a55; color:#fff; }
+#batchPanel .bp-reselect { background:rgba(255,255,255,.15); color:#fff; }
+#batchPanel .bp-download-all { background:var(--primary); color:#fff; }
+#batchPanel .bp-body { flex:1; overflow-y:auto; padding:16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; align-content:start; }
+@media (max-width:480px){ #batchPanel .bp-body { grid-template-columns:repeat(2,1fr); padding:12px; gap:10px; } }
+#batchPanel .bp-item { background:rgba(255,255,255,.07); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; }
+#batchPanel .bp-item img { width:100%; display:block; background:#000; }
+#batchPanel .bp-item .bp-cap { display:flex; align-items:center; justify-content:space-between; padding:9px 10px; }
+#batchPanel .bp-item .bp-cap span { color:#cfcfd6; font-size:12px; }
+#batchPanel .bp-item .bp-save { background:var(--primary); color:#fff; border:none; padding:7px 14px; border-radius:8px; font-size:13px; cursor:pointer; -webkit-tap-highlight-color:transparent; flex-shrink:0; }
+#batchPanel .bp-item .bp-save:active { opacity:.8; }
+
 /* 移动端侧拉抽屉（默认隐藏，仅手机端显示菜单按钮） */
 .header-left { display:flex; align-items:center; gap:8px; }
 .menu-btn { display:none; width:36px; height:36px; margin-left:-6px; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
@@ -1078,86 +1097,141 @@ async function exportPNG(scale = 2){
 }
 
 // 批量导出：一次选 N 张壁纸，按当前模板的设备台数自动分组，
-// 每组壁纸填满各台手机屏幕，自动导出多张样机图。导出后壁纸保留在界面，方便继续使用。
+// 每组壁纸填满各台手机屏幕，自动导出多张样机图。所有结果一次性展示在结果面板，
+// 每张可单独保存/下载，也可全部下载；支持重新选择壁纸。导出后壁纸保留在界面。
 async function batchExportWallpapers(){
   const devCount = curTpl().devices.length;
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
   showToast('请选择多张壁纸（手机上长按相册缩略图可多选）', 3500);
   pickImages(async urls => {
     if (!urls.length) return;
-    // 本次选中的壁纸，导出后直接作为当前壁纸保留在界面上
+    // 本次选中的壁纸，导出后作为当前壁纸保留在界面上
     let finalWalls = [];
-    if (devCount === 1) {
-      // 单设备模板：N 张壁纸逐张导出 N 张图
-      const n = urls.length;
-      for (let i = 0; i < n; i++) {
-        showToast(`正在导出第 ${i+1}/${n} 张…`, 0);
-        S.wallpapers = [urls[i]];
-        renderCanvas();
-        await new Promise(r => setTimeout(r, 200)); // 等待壁纸渲染稳定
-        const blob = await renderToBlob(2);
-        if (isMobile) {
-          const blobURL = URL.createObjectURL(blob);
-          showSaveOverlay(blobURL, blob);
-        } else {
-          const blobURL = URL.createObjectURL(blob);
-          const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}-${i+1}.png`; a.click();
-          setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
+    const blobs = [];   // 收集所有导出的图片 blob
+    const labels = [];  // 每张图的提示文字
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (('ontouchstart' in window) && window.innerWidth < 1024);
+    try {
+      if (devCount === 1) {
+        // 单设备模板：N 张壁纸逐张导出 N 张图
+        const n = urls.length;
+        for (let i = 0; i < n; i++) {
+          showToast(`正在导出第 ${i+1}/${n} 张…`, 0);
+          S.wallpapers = [urls[i]];
+          renderCanvas();
+          await new Promise(r => setTimeout(r, 150)); // 等待壁纸渲染稳定
+          blobs.push(await renderToBlob(2));
+          labels.push(`第 ${i+1} 张`);
         }
-      }
-      finalWalls.push(urls[urls.length - 1]); // 保留最后一张作为当前壁纸
-    } else if (urls.length === 1) {
-      // 多设备模板只选了1张：所有手机都用这张，导出1张图
-      showToast('正在导出…', 0);
-      S.wallpapers = Array(devCount).fill(urls[0]);
-      renderCanvas();
-      await new Promise(r => setTimeout(r, 200));
-      const blob = await renderToBlob(2);
-      if (isMobile) {
-        const blobURL = URL.createObjectURL(blob);
-        showSaveOverlay(blobURL, blob);
+        finalWalls.push(urls[urls.length - 1]); // 保留最后一张作为当前壁纸
+      } else if (urls.length === 1) {
+        // 多设备模板只选了1张：所有手机都用这张，导出1张图
+        showToast('正在导出…', 0);
+        S.wallpapers = Array(devCount).fill(urls[0]);
+        renderCanvas();
+        await new Promise(r => setTimeout(r, 150));
+        blobs.push(await renderToBlob(2));
+        labels.push(`全部 ${devCount} 台`);
+        finalWalls = Array(devCount).fill(urls[0]);
       } else {
-        const blobURL = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}.png`; a.click();
-        setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
-      }
-      finalWalls = Array(devCount).fill(urls[0]);
-    } else {
-      // 多设备模板选了多张：每 devCount 张一组，组内每台手机分配一张，导出一张图
-      const groups = [];
-      for (let i = 0; i < urls.length; i += devCount) {
-        groups.push(urls.slice(i, i + devCount));
-      }
-      const n = groups.length;
-      for (let g = 0; g < n; g++) {
-        showToast(`正在导出第 ${g+1}/${n} 张…`, 0);
-        // 该组壁纸：填满各台设备（不足的用模板默认壁纸占位，防止个别手机空白）
-        const group = groups[g];
-        S.wallpapers = [];
-        for (let d = 0; d < devCount; d++) {
-          S.wallpapers.push(group[d] || curTpl().devices[d].sc.wallpaperImage || '');
+        // 多设备模板选了多张：每 devCount 张一组，组内每台手机分配一张，导出一张图
+        const groups = [];
+        for (let i = 0; i < urls.length; i += devCount) {
+          groups.push(urls.slice(i, i + devCount));
         }
-        renderCanvas();
-        await new Promise(r => setTimeout(r, 200));
-        const blob = await renderToBlob(2);
-        if (isMobile) {
-          const blobURL = URL.createObjectURL(blob);
-          showSaveOverlay(blobURL, blob);
-        } else {
-          const blobURL = URL.createObjectURL(blob);
-          const a = document.createElement('a'); a.href = blobURL; a.download = `mockup-${Date.now()}-${g+1}.png`; a.click();
-          setTimeout(() => URL.revokeObjectURL(blobURL), 8000);
+        const n = groups.length;
+        for (let g = 0; g < n; g++) {
+          showToast(`正在导出第 ${g+1}/${n} 张…`, 0);
+          // 该组壁纸：填满各台设备（不足的用模板默认壁纸占位，防止个别手机空白）
+          const group = groups[g];
+          S.wallpapers = [];
+          for (let d = 0; d < devCount; d++) {
+            S.wallpapers.push(group[d] || curTpl().devices[d].sc.wallpaperImage || '');
+          }
+          renderCanvas();
+          await new Promise(r => setTimeout(r, 150));
+          blobs.push(await renderToBlob(2));
+          labels.push(`第 ${g+1}/${n} 张`);
+          // 最后一组作为当前界面的壁纸
+          if (g === n - 1) { finalWalls = S.wallpapers.slice(); }
         }
-        // 最后一组作为当前界面的壁纸
-        if (g === n - 1) { finalWalls = S.wallpapers.slice(); }
       }
+    } catch(e){
+      console.error(e);
+      showToast('导出出错：' + e.message, 4000);
+      return;
     }
     // 导出结束后，把最后导出的这组壁纸保留为当前壁纸，方便直接看到效果
     S.wallpapers = finalWalls.slice();
     renderCanvas(); updateRightPanel();
     hideToast();
-    showToast('批量导出完成，壁纸已应用到界面', 3500);
+    // 一次性把所有结果展示在面板中
+    showBatchResults(blobs, labels, isMobile);
   });
+}
+
+// 批量导出结果面板：一次性展示所有导出图，每张可单独保存/下载，支持重新选择
+function showBatchResults(blobs, labels, isMobile){
+  let p = document.getElementById('batchPanel');
+  if (!p) { p = document.createElement('div'); p.id = 'batchPanel'; document.body.appendChild(p); }
+  const total = blobs.length;
+  const head = `
+    <div class="bp-head">
+      <div style="display:flex;align-items:center;"><h3>批量导出结果</h3><span class="bp-count">共 ${total} 张</span></div>
+      <div class="bp-actions">
+        <button class="bp-reselect">重新选择</button>
+        ${!isMobile ? '<button class="bp-download-all">全部下载</button>' : ''}
+        <button class="bp-close">关闭</button>
+      </div>
+    </div>`;
+  let body = '<div class="bp-body">';
+  const objs = []; // 保存 blobURL + blob，便于下载/分享
+  blobs.forEach((b, i) => {
+    const url = URL.createObjectURL(b);
+    objs.push({ url, blob: b });
+    body += `<div class="bp-item">
+      <img src="${url}" alt="导出图${i+1}">
+      <div class="bp-cap">
+        <span>${labels[i] || ('第 '+(i+1)+' 张')}</span>
+        <button class="bp-save" data-i="${i}">${isMobile ? '保存' : '下载'}</button>
+      </div>
+    </div>`;
+  });
+  body += '</div>';
+  p.innerHTML = head + body;
+
+  // 单张保存/下载
+  p.querySelectorAll('.bp-save').forEach(btn => {
+    btn.onclick = () => {
+      const i = +btn.dataset.i;
+      const o = objs[i];
+      if (!o) return;
+      if (isMobile) {
+        // 手机：长按保存更可靠，同时提供系统分享
+        showSaveOverlay(o.url, o.blob);
+      } else {
+        const a = document.createElement('a'); a.href = o.url; a.download = `mockup-${Date.now()}-${i+1}.png`; a.click();
+      }
+    };
+  });
+  // 全部下载（电脑端）：逐个触发，稍加间隔避免浏览器丢弃
+  const dlAll = p.querySelector('.bp-download-all');
+  if (dlAll) {
+    dlAll.onclick = () => {
+      dlAll.textContent = '正在下载…'; dlAll.disabled = true;
+      objs.forEach((o, i) => {
+        setTimeout(() => {
+          const a = document.createElement('a'); a.href = o.url; a.download = `mockup-${Date.now()}-${i+1}.png`; a.click();
+          if (i === objs.length - 1) { dlAll.textContent = '全部下载'; dlAll.disabled = false; }
+        }, i * 350);
+      });
+    };
+  }
+  // 关闭
+  p.querySelector('.bp-close').onclick = () => { p.remove(); objs.forEach(o => URL.revokeObjectURL(o.url)); };
+  // 重新选择壁纸
+  p.querySelector('.bp-reselect').onclick = () => {
+    p.remove(); objs.forEach(o => URL.revokeObjectURL(o.url));
+    setTimeout(() => batchExportWallpapers(), 50);
+  };
 }
 // 导出图片预览浮层：长按图片 → 存储图像 / 共享
 function showSaveOverlay(imgURL, blob){
