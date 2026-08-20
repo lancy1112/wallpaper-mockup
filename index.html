@@ -1015,11 +1015,14 @@ function loadSavedState(){
 }
 function applySavedState(o){
   if (!o) return false;
-  // 模板选择始终以第一个模板（用户常用模板，如公众号封面2）为默认，
-  // 不恢复上次的 typeIdx/tplIdx，避免每次打开被旧选择覆盖。
+  // 画布默认始终加载第一个模板（公众号封面2）：先 loadTemplate 建立模板自身状态，
+  // 再只恢复用户内容（壁纸、文字叠加、显示开关、日期时间等），
+  // 不回灌旧模板的画布状态（bgW/bgH/deviceOverrides/typeIdx/tplIdx），避免画布错乱。
   loadTemplate(0, 0);
   const keep = Object.assign({}, o);
-  delete keep.typeIdx; delete keep.tplIdx;
+  ['typeIdx','tplIdx','bgW','bgH','deviceOverrides'].forEach(k => delete keep[k]);
+  // 背景模式与背景图跟旧模板绑定，恢复为模板默认，否则新模板会带上旧模板的背景
+  delete keep.bgMode; delete keep.bgImage; delete keep.bgBlur;
   S = Object.assign(S, keep);
   renderTemplateGrid(); renderCanvas(); updateRightPanel();
   return true;
@@ -1558,13 +1561,9 @@ function init(){
   setupDrawer();
   renderTemplateGrid();
   loadTemplate(0,0);
-  // 恢复本机自动保存的历史数据（模板、壁纸、设置）
+  // 恢复本机自动保存的历史数据（壁纸、设置）；模板默认始终为第一个（公众号封面2）
   const saved = loadSavedState();
   if (saved) applySavedState(saved);
-  else {
-    const old = localStorage.getItem('mockup_v3_tpl');
-    if (old) { try { const o = JSON.parse(old); loadTemplate(o.type||0, o.tpl||0); } catch(e){} }
-  }
   window.addEventListener('resize', fitCanvas);
   window.addEventListener('beforeunload', saveState);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveState(); });
