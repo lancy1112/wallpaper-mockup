@@ -1099,13 +1099,15 @@ function pickImages(cb){
   };
   inp.click();
 }
-// 压缩超大图片：长边限 1600px、JPEG 88%，减小 data URL 体积和 iOS 导出内存压力
-async function compressDataURL(url, maxEdge = 1600, quality = 0.88){
+// 压缩超大图片：仅当长边超过 2400px 才缩到 2400 并以 JPEG 92% 重编码；
+// 尺寸没超限时直接返回原图，不重编码（避免无损画质损失）
+async function compressDataURL(url, maxEdge = 2400, quality = 0.92){
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => {
       try {
         const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        if (scale >= 1) { resolve(url); return; } // 尺寸没超限：不缩放、不重编码
         const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
         const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
         const ctx = cv.getContext('2d');
